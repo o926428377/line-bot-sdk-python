@@ -29,6 +29,7 @@ from .models import (
     InsightMessageDeliveryResponse, InsightFollowersResponse, InsightDemographicResponse,
     InsightMessageEventResponse, BroadcastResponse, NarrowcastResponse,
     MessageProgressNarrowcastResponse, BotInfo, GetWebhookResponse, TestWebhookResponse,
+    AudienceGroup,
 )
 from .models.responses import Group
 
@@ -1147,6 +1148,244 @@ class LineBotApi(object):
         )
 
         return BotInfo.new_from_json_dict(response.json)
+
+    def create_audience_group(self, audience_group_name, audiences=[],
+                              is_ifa=False, timeout=None):
+        """Create an audience group.
+
+        https://developers.line.biz/en/reference/messaging-api/#create-upload-audience-group
+
+        :param str audience_group_name: The audience's name
+        :param list audiences: An array of user IDs or IFAs
+        :param bool is_ifa: true | false
+        :return: audience group id
+        """
+        response = self._post(
+            '/v2/bot/audienceGroup/upload',
+            data=json.dumps({
+                "description": audience_group_name,
+                "isIfaAudience": is_ifa,
+                "audiences": [{"id": audience} for audience in audiences[:10000]],
+            }),
+            timeout=timeout
+        )
+        audience_group_id = response.json.get('audienceGroupId')
+        if 10000 < len(audiences):
+            self.add_audiences_to_audience_group(audience_group_id, audiences[10000:])
+
+        return audience_group_id
+
+    def get_audience_group(self, audience_group_id, timeout=None):
+        """Get the object of audience group.
+
+        https://developers.line.biz/en/reference/messaging-api/#get-audience-group
+
+        :param str audience_group_id: The audience ID
+        :param timeout: (optional) How long to wait for the server
+            to send data before giving up, as a float,
+            or a (connect timeout, read timeout) float tuple.
+            Default is self.http_client.timeout
+        :type timeout: float | tuple(float, float)
+        :return: AudienceGroup instance
+        """
+        response = self._get(
+            '/v2/bot/audienceGroup/{audience_group_id}'.format(
+                audience_group_id=audience_group_id),
+            timeout=timeout
+        )
+        result = dict(jobs=response.json.get('jobs', []), **response.json.get('audienceGroup', {}))
+        return AudienceGroup.new_from_json_dict(result)
+
+    def get_audience_group_list(self, page=1, description=None, status=None, size=20,
+                                include_external_public_group=None, create_route=None,
+                                timeout=None):
+        """Get data for more than one audience.
+
+        https://developers.line.biz/en/reference/messaging-api/#get-audience-groups
+
+        :param int page: The page to return when getting (paginated) results. Must be 1 or higher
+        :param str description: The name of the audience(s) to return
+        :param str status: IN_PROGRESS | READY | FAILED | EXPIRED
+        :param int size: The number of audiences per page. Default: 20, Max: 40
+        :param bool include_external_public_group: true | false
+        :param str create_route: How the audience was created.
+        :type create_route: OA_MANAGER | MESSAGING_API
+        :return: AudienceGroup instance
+        """
+        params = dict([(param, eval(param)) for param in
+                       ['page', 'description', 'status', 'size',
+                        'includesExternalPublicGroup', 'createRoute']
+                       if eval(param) is not None])
+        response = self._get(
+            '/v2/bot/audienceGroup/list?',
+            params=params,
+            timeout=timeout
+        )
+        result = []
+        for audience_group in response.json.get('audienceGroups', []):
+            result.append(AudienceGroup.new_from_json_dict(audience_group))
+        if response.json.get('hasNextPage', False):
+            result += self.get_audience_group_list(page + 1, description, status, size,
+                                                   include_external_public_group,
+                                                   create_route, timeout)
+        return result
+
+    def delete_audience_group(self, audience_group_id, timeout=None):
+        """Delete an existing audience.
+
+        https://developers.line.biz/en/reference/messaging-api/#set-description-audience-group
+
+        :param str audience_group_id: The audience ID
+        :param timeout: (optional) How long to wait for the server
+            to send data before giving up, as a float,
+            or a (connect timeout, read timeout) float tuple.
+            Default is self.http_client.timeout
+        :type timeout: float | tuple(float, float)
+        """
+        self._delete(
+            '/v2/bot/audienceGroup/{}'.format(audience_group_id),
+            timeout=timeout
+        )
+
+    def rename_audience_group(self, audience_group_id, audience_group_name, timeout=None):
+        """Modify the name of an existing audience.
+
+        https://developers.line.biz/en/reference/messaging-api/#set-description-audience-group
+
+        :param str audience_group_id: The audience ID
+        :param str audience_group_name: The new audience's name
+        :param timeout: (optional) How long to wait for the server
+            to send data before giving up, as a float,
+            or a (connect timeout, read timeout) float tuple.
+            Default is self.http_client.timeout
+        :type timeout: float | tuple(float, float)
+        """
+        self._put(
+            '/v2/bot/audienceGroup/{}/updateDescription'.format(audience_group_id),
+            data=json.dumps({
+                "description": audience_group_name,
+            }),
+            timeout=timeout
+        )
+
+    def add_audiences_to_audience_group(self, audience_group_id, audiences, is_ifa=False,
+                                        upload_description=None, timeout=None):
+        """Add new user IDs or IFAs to an audience for uploading user IDs.
+
+        https://developers.line.biz/en/reference/messaging-api/#update-upload-audience-group
+
+        :param str audience_group_id: The audience ID
+        :param list audiences: An array of user IDs or IFAs
+        :param timeout: (optional) How long to wait for the server
+            to send data before giving up, as a float,
+            or a (connect timeout, read timeout) float tuple.
+            Default is self.http_client.timeout
+        :param bool is_ifa: If this is false (default), recipients are specified by user IDs.
+            If true, recipients must be specified by IFAs.
+        :param str upload_description: The description to register for the job
+        :type timeout: float | tuple(float, float)
+        """
+        audiences_chunks = [audiences[i:i + 10000] for i in range(0, len(audiences), 10000)]
+        for _audiences in audiences_chunks:
+            self._put(
+                '/v2/bot/audienceGroup/upload',
+                data=json.dumps({
+                    "audienceGroupId": audience_group_id,
+                    "audiences": [{"id": audience} for audience in _audiences],
+                    "isIfaAudience": is_ifa,
+                    "uploadDescription": upload_description,
+                }),
+                timeout=timeout
+            )
+
+    def get_audience_group_authority_level(self, timeout=None):
+        """Get the authority level of the audience.
+
+        https://developers.line.biz/en/reference/messaging-api/#get-authority-level
+
+        :param timeout: (optional) How long to wait for the server
+            to send data before giving up, as a float,
+            or a (connect timeout, read timeout) float tuple.
+            Default is self.http_client.timeout
+        :type timeout: float | tuple(float, float)
+        :return: json
+        """
+        response = self._get(
+            '/v2/bot/audienceGroup/authorityLevel',
+            timeout=timeout
+        )
+
+        return response.json
+
+    def change_audience_group_authority_level(self, authority_level='PUBLIC', timeout=None):
+        """Change the authority level of all audiences created in the same channel.
+
+        https://developers.line.biz/en/reference/messaging-api/#change-authority-level
+
+        :param str authority_level: PUBLIC | PRIVATE.
+        """
+        self._put(
+            '/v2/bot/audienceGroup/authorityLevel',
+            data=json.dumps({
+                "authorityLevel": authority_level,
+            }),
+            timeout=timeout
+        )
+
+    def create_click_based_audience_group(self, audience_group_name, request_id,
+                                          click_url='', timeout=None):
+        """Create an audience for click-based retargeting.
+
+        https://developers.line.biz/en/reference/messaging-api/#create-click-audience-group
+
+        :param str audience_group_name: The audience's name. Audience names must be unique.
+        :param str request_id: The request ID of a message sent in the past 60 days.
+        :param str click_url: The URL clicked by the user.
+        If empty, users who clicked any URL in the message are added to the list of recipients.
+        :param timeout: (optional) How long to wait for the server
+            to send data before giving up, as a float,
+            or a (connect timeout, read timeout) float tuple.
+            Default is self.http_client.timeout
+        :type timeout: float | tuple(float, float)
+        :return: audience group id
+        """
+        response = self._post(
+            '/v2/bot/audienceGroup/click',
+            data=json.dumps({
+                "description": audience_group_name,
+                "requestId": request_id,
+                "clickUrl": click_url,
+            }),
+            timeout=timeout
+        )
+
+        return response.json.get('audienceGroupId')
+
+    def create_impression_based_audience_group(self, audience_group_name, request_id,
+                                               timeout=None):
+        """Create an audience for impression-based retargeting.
+
+        https://developers.line.biz/en/reference/messaging-api/#create-imp-audience-group
+
+        :param str audience_group_name: The audience's name. Audience names must be unique.
+        :param str request_id: The request ID of a  message sent in the past 60 days.
+        :param timeout: (optional) How long to wait for the server
+            to send data before giving up, as a float,
+            or a (connect timeout, read timeout) float tuple.
+            Default is self.http_client.timeout
+        :type timeout: float | tuple(float, float)
+        :return: audience group id
+        """
+        response = self._post(
+            '/v2/bot/audienceGroup/imp',
+            data=json.dumps({
+                "description": audience_group_name,
+                "requestId": request_id,
+            }),
+            timeout=timeout
+        )
+
+        return response.json.get('audienceGroupId')
 
     def set_webhook_endpoint(self, webhook_endpoint, timeout=None):
         """Set the webhook endpoint URL.

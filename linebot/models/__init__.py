@@ -101,6 +101,7 @@ from .insight import (  # noqa
     MessageStatistics,
     MessageInsight,
     ClickInsight,
+    JobInsight,
 )
 
 from .limit import (  # noqa
@@ -153,6 +154,7 @@ from .responses import (  # noqa
     BotInfo,
     GetWebhookResponse,
     TestWebhookResponse,
+    AudienceGroup,
 )
 from .rich_menu import (  # noqa
     RichMenu,
